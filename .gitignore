@@ -1,0 +1,23 @@
+# Ignore Composer's vendor directory
+vendor/
+
+# Ignore IDE settings
+.vscode/
+
+# Ignore local data and logs
+data/
+logs/
+cache/
+
+# Ignore environment files
+.env
+
+# Ignore PHPUnit cache
+.phpunit.result.cache
+
+# Ignore specific HTML files in the example directory
+example/checkorderTest.php
+example/SubmitOrderRequest-test.php
+example/test-ipn-register.php
+example/test-ipn-registered.php
+example/token-test.php

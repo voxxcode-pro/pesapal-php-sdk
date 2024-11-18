@@ -1,0 +1,7 @@
+{
+    "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJodHRwOi8vc2NoZW1hcy5taWNyb3NvZnQuY29tL3dzLzIwMDgvMDYvaWRlbnRpdHkvY2xhaW1zL3VzZXJkYXRhIjoiZDY1OWZmODItZWViYS00ZWFiLTk1ZDItZTA0MzliNWFhODFhIiwidWlkIjoiVERwaWdCT09ocyt6QWw4Y3dIMkZsODJqSkd5RDh4ZXYiLCJuYmYiOjE3MzE5MTg4OTUsImV4cCI6MTczMTkyMjQ5NSwiaWF0IjoxNzMxOTE4ODk1LCJpc3MiOiJodHRwOi8vY3licWEucGVzYXBhbC5jb20vIiwiYXVkIjoiaHR0cDovL2N5YnFhLnBlc2FwYWwuY29tLyJ9.FZqThRlzJjkd4DInogFf7jpO68lpg1R37SPdSqkaEcc",
+    "expires_at": "2024-11-18T09:34:55.7403221Z",
+    "ipn_url": "https:\/\/www.example.com\/ipn",
+    "notification_id": "0897694b-b2ff-4d97-b42c-dc8964edf360",
+    "order_tracking_id": "b931e046-de42-4aee-8a0c-dc8231b9dbac"
+}
