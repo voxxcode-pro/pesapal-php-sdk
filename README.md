@@ -20,6 +20,8 @@ The **Pesapal PHP SDK** provides a simple and efficient way to integrate the Pes
     - [Recurring Payments](#recurring-payments)
     - [Refund Request](#refund-request)
     - [Get Transaction Status](#get-transaction-status)
+    - [Tutorials and Guides](#tutorials-and-guides)
+    - [Testing Environment Setup](#testing-environment-setup)
   - [License](#license)
 
 ## Features
@@ -501,6 +503,20 @@ After a transaction is completed, you can check its status using the `order_trac
     // Get the transaction status
     $response = $clientApi->getTransactionStatus($orderTrackingId);
 ```
+
+### Tutorials and Guides
+
+Embark on your journey with the Pesapal PHP SDK through our exclusive tutorials and guides:
+
+- **[Installing Pesapal Sdk: Kickstart Your Payment Integration](https://katorymnd.com/article/installing-pesapal-sdk-kickstart-your-payment-integration)** - Quickly install and set up the Pesapal PHP SDK to integrate secure payment processing into your PHP app with this essential beginner's guide.
+
+- **[Mastering Pesapal Sdk: Unlock Advanced Payment Features](https://katorymnd.com/article/mastering-pesapal-sdk-unlock-advanced-payment-features)** - Explore advanced features of the Pesapal PHP SDK: recurring payments, refunds, transaction queries, and more in this essential guide.
+
+### Testing Environment Setup
+
+For testing and development purposes, utilize the test cards provided by Pesapal at the following URL:
+
+[https://cybqa.pesapal.com/PesapalIframe/PesapalIframe3/TestPayments](https://cybqa.pesapal.com/PesapalIframe/PesapalIframe3/TestPayments)
 
 ## License
 
