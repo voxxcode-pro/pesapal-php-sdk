@@ -17,9 +17,10 @@ The **Pesapal PHP SDK** provides a simple and efficient way to integrate the Pes
     - [Important Notice: IPN Registration](#important-notice-ipn-registration)
     - [Register IPN URL](#register-ipn-url)
     - [Submit Order](#submit-order)
+    - [Get Transaction Status](#get-transaction-status)
     - [Recurring Payments](#recurring-payments)
     - [Refund Request](#refund-request)
-    - [Get Transaction Status](#get-transaction-status)
+    - [Get Transaction Status](#get-transaction-status-1)
     - [Tutorials and Guides](#tutorials-and-guides)
     - [Testing Environment Setup](#testing-environment-setup)
   - [License](#license)
@@ -214,7 +215,7 @@ $response = $clientApi->submitOrderRequest($orderData);
 // Redirect the customer to the payment page
 header('Location: ' . $response['redirect_url']);
 exit();
-
+````
 
 ### Get Transaction Status
 

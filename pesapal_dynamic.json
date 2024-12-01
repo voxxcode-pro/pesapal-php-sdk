@@ -1,0 +1,6 @@
+{
+    "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJodHRwOi8vc2NoZW1hcy5taWNyb3NvZnQuY29tL3dzLzIwMDgvMDYvaWRlbnRpdHkvY2xhaW1zL3VzZXJkYXRhIjoiZDY1OWZmODItZWViYS00ZWFiLTk1ZDItZTA0MzliNWFhODFhIiwidWlkIjoiVERwaWdCT09ocyt6QWw4Y3dIMkZsODJqSkd5RDh4ZXYiLCJuYmYiOjE3MzI3MDEzOTUsImV4cCI6MTczMjcwNDk5NSwiaWF0IjoxNzMyNzAxMzk1LCJpc3MiOiJodHRwOi8vY3licWEucGVzYXBhbC5jb20vIiwiYXVkIjoiaHR0cDovL2N5YnFhLnBlc2FwYWwuY29tLyJ9.NwyLQOmKC9H-DovsvsuUBnsYOktZKt2Gk-DqxQwiP1A",
+    "expires_at": "2024-11-27T10:56:35.2730014Z",
+    "ipn_url": "https:\/\/www.example.com\/ipns",
+    "notification_id": "9578263f-7ad5-45e8-96d7-dc884adf5ff4"
+}
