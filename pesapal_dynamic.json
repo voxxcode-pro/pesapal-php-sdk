@@ -1,7 +1,7 @@
 {
-    "ipn_url": "https:\/\/katorymnd.com\/api\/pesapal-ipn",
-    "notification_id": "710f1f90-f318-41db-8e3d-dba0df6c5c13",
-    "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJodHRwOi8vc2NoZW1hcy5taWNyb3NvZnQuY29tL3dzLzIwMDgvMDYvaWRlbnRpdHkvY2xhaW1zL3VzZXJkYXRhIjoiZDY1OWZmODItZWViYS00ZWFiLTk1ZDItZTA0MzliNWFhODFhIiwidWlkIjoiVERwaWdCT09ocyt6QWw4Y3dIMkZsODJqSkd5RDh4ZXYiLCJuYmYiOjE3NTEyODgwOTksImV4cCI6MTc1MTI5MTY5OSwiaWF0IjoxNzUxMjg4MDk5LCJpc3MiOiJodHRwOi8vY3licWEucGVzYXBhbC5jb20vIiwiYXVkIjoiaHR0cDovL2N5YnFhLnBlc2FwYWwuY29tLyJ9.i9aKHIjffTZUt4gU0pJSjW-fnBi_stvlSklzaDmNRQE",
-    "expires_at": "2025-06-30T13:54:59.9990374Z",
-    "token_env": "sandbox"
+  "ipn_url": "https://www.example.com/ipns",
+  "notification_id": "710f1f90-f318-41db-8e3d-dba0df6c5c13",
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJodHRwOi8vc2NoZW1....stvlSklzaDmNRQE",
+  "expires_at": "2025-06-30T13:54:59.9990374Z",
+  "token_env": "sandbox"
 }
