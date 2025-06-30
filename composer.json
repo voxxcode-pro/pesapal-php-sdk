@@ -2,7 +2,7 @@
   "name": "katorymnd/pesapal-php-sdk",
   "description": "A PHP SDK for Pesapal API integration, enabling seamless payment handling in PHP applications.",
   "type": "library",
-  "version": "1.2.0",
+  "version": "2.1.0",
   "keywords": [
     "pesapal",
     "payment",

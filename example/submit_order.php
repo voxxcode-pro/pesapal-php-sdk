@@ -611,10 +611,10 @@
                                 '<br>You will be redirected to the payment page shortly.'
                             );
 
-                            // Redirect after a delay
-                            setTimeout(function() {
-                                window.location.href = response.redirect_url;
-                            }, 3000);
+                            // // Redirect after a delay
+                            // setTimeout(function() {
+                            //     window.location.href = response.redirect_url;
+                            // }, 3000);
                         }
                     } else if (response.error) {
                         const errorMessage = response.response ?

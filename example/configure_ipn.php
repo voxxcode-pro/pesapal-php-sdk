@@ -1,15 +1,28 @@
 <?php
+/**
+ * configure_ipn.php
+ * ─────────────────────────────────────────────────────────────────────────
+ * Registers a Pesapal IPN URL.
+ *
+ * • Uses the **environment-aware** PesapalClient (2025-06-30 edition).
+ * • Forces a fresh token on every call (`getAccessToken(true)`) so switching
+ *   between sandbox ⇆ production cannot leak a stale JWT.
+ * • Demonstrates how to wipe the cache manually with `$config->clearAccessToken()`.
+ *
+ * @author  Katorymnd Freelancer
+ * @license MIT
+ */
 
-// configure_ipn.php
+header('Content-Type: application/json');
 
-header("Content-Type: application/json");
-
-// Include Composer's autoloader
+/* ───────────────────────────────────────────────────────────────────────── */
+/* 1.  Autoload + dependencies                                              */
+/* ───────────────────────────────────────────────────────────────────────── */
 $autoloadPath = __DIR__ . '/../vendor/autoload.php';
 if (!file_exists($autoloadPath)) {
     echo json_encode([
-        'success' => false,
-        'errorMessage' => 'Autoloader not found. Please run composer install.'
+        'success'      => false,
+        'errorMessage' => 'Autoloader not found. Please run composer install.',
     ]);
     exit;
 }
@@ -24,104 +37,116 @@ use Monolog\Handler\StreamHandler;
 use Whoops\Run;
 use Whoops\Handler\PrettyPageHandler;
 
-// Initialize Whoops error handler for development
+/* ───────────────────────────────────────────────────────────────────────── */
+/* 2.  Error prettifier (dev only)                                          */
+/* ───────────────────────────────────────────────────────────────────────── */
 $whoops = new Run();
 $whoops->pushHandler(new PrettyPageHandler());
 $whoops->register();
 
-// Load environment variables
-$dotenv = Dotenv::createImmutable(__DIR__ . '/../');
-$dotenv->load();
+/* ───────────────────────────────────────────────────────────────────────── */
+/* 3.  Environment variables (.env)                                         */
+/* ───────────────────────────────────────────────────────────────────────── */
+Dotenv::createImmutable(__DIR__ . '/../')->load();
 
-// Retrieve consumer key and secret from environment variables
-$consumerKey = $_ENV['PESAPAL_CONSUMER_KEY'] ?? null;
+$consumerKey    = $_ENV['PESAPAL_CONSUMER_KEY']    ?? null;
 $consumerSecret = $_ENV['PESAPAL_CONSUMER_SECRET'] ?? null;
 
 if (!$consumerKey || !$consumerSecret) {
     echo json_encode([
-        'success' => false,
-        'errorMessage' => 'Consumer key or secret missing in environment variables.'
+        'success'      => false,
+        'errorMessage' => 'Consumer key or secret missing in environment variables.',
     ]);
     exit;
 }
 
-// Initialize PesapalConfig and PesapalClient
-$configPath = __DIR__ . '/../pesapal_dynamic.json';
-$config = new PesapalConfig($consumerKey, $consumerSecret, $configPath); // Provide all required arguments
-$environment = 'sandbox'; // Change to 'production' when ready for live transactions
-$sslVerify = false; // Enable SSL verification for production
-
+/* ───────────────────────────────────────────────────────────────────────── */
+/* 4.  SDK config + client                                                  */
+/* ───────────────────────────────────────────────────────────────────────── */
+$configPath  = __DIR__ . '/../pesapal_dynamic.json';
+$config      = new PesapalConfig($consumerKey, $consumerSecret, $configPath);
+$environment = 'sandbox';   // ← switch to 'sandbox' when testing
+$sslVerify   = false;           // true in production
 
 $clientApi = new PesapalClient($config, $environment, $sslVerify);
 
-// Initialize Monolog for logging
+/* ───────────────────────────────────────────────────────────────────────── */
+/* 5.  Logging setup                                                        */
+/* ───────────────────────────────────────────────────────────────────────── */
+
 $log = new Logger('pawaPayLogger');
 $log->pushHandler(new StreamHandler(__DIR__ . '/../logs/payment_success.log', \Monolog\Level::Info));
 $log->pushHandler(new StreamHandler(__DIR__ . '/../logs/payment_failed.log', \Monolog\Level::Error));
 
-// Check if the request is POST and contains IPN URL
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    // Capture the JSON input from the request body
-    $input = json_decode(file_get_contents('php://input'), true);
-    $ipnUrl = $input['ipn_url'] ?? null;
-
-    // Check if IPN URL was provided
-    if (!$ipnUrl) {
-        echo json_encode(['error' => 'IPN URL is required']);
-        exit;
-    }
-
-    try {
-        // Step 1: Ensure we have a valid access token
-        $accessToken = $clientApi->getAccessToken(); // Handles token retrieval and refresh
-
-        if (!$accessToken) {
-            throw new PesapalException('Failed to obtain access token');
-        }
-
-        // Step 2: Register IPN URL with Pesapal using the valid access token
-        $response = $clientApi->registerIpnUrl($ipnUrl, 'POST'); // 'POST' or 'GET' based on your preference
-
-        if (isset($response['response']['ipn_id'])) {
-            $ipnData = $response['response'];
-
-            $notificationId = $ipnData['ipn_id'];
-            $createdDate = $ipnData['created_date'];
-
-
-            // Save IPN details in dynamic config
-            $config->setIpnDetails($ipnUrl, $notificationId);
-
-            // Log the success to payment_success.log
-            $log->info('IPN URL registered successfully', [
-                'ipn_url' => $ipnUrl,
-                'notification_id' => $notificationId,
-                'created_date' => $createdDate,
-
-            ]);
-
-            // Send a success response with the IPN details
-            echo json_encode([
-                'message' => 'IPN URL registered successfully',
-                'ipn_url' => $ipnUrl,
-                'notification_id' => $notificationId,
-                'created_date' => $createdDate,
-
-            ]);
-        } else {
-            throw new PesapalException('Failed to register IPN URL with Pesapal.');
-        }
-    } catch (PesapalException $e) {
-        // Log the error to payment_failed.log
-        $log->error('Error registering IPN URL', [
-            'error' => $e->getMessage(),
-            'details' => $e->getErrorDetails()
-        ]);
-
-        // Return the detailed error message
-        echo $e->getErrorDetailsAsJson();
-    }
-} else {
-    // Handle invalid request method
+/* ───────────────────────────────────────────────────────────────────────── */
+/* 6.  POST handler                                                         */
+/* ───────────────────────────────────────────────────────────────────────── */
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     echo json_encode(['error' => 'Invalid request method']);
+    exit;
+}
+
+$input  = json_decode(file_get_contents('php://input'), true);
+$ipnUrl = $input['ipn_url'] ?? null;
+
+if (!$ipnUrl) {
+    echo json_encode(['error' => 'IPN URL is required']);
+    exit;
+}
+
+try {
+    /**
+     * If you previously received a 401 and want to be absolutely sure the
+     * cache is wiped, call:
+     *     $config->clearAccessToken();
+     * BEFORE fetching the next token.
+     *
+     * Here we simply force-refresh on every registration call:
+     */
+    $accessToken = $clientApi->getAccessToken(true);   // ← fresh token
+
+    if (!$accessToken) {
+        throw new PesapalException('Failed to obtain access token');
+    }
+
+    /* Register IPN URL */
+    $response = $clientApi->registerIpnUrl($ipnUrl, 'POST');
+
+    if (!isset($response['response']['ipn_id'])) {
+        throw new PesapalException('Failed to register IPN URL with Pesapal.');
+    }
+
+    $ipnData        = $response['response'];
+    $notificationId = $ipnData['ipn_id'];
+    $createdDate    = $ipnData['created_date'];
+
+    /* Persist & log */
+    $config->setIpnDetails($ipnUrl, $notificationId);
+
+    $log->info('IPN URL registered successfully', [
+        'ipn_url'         => $ipnUrl,
+        'notification_id' => $notificationId,
+        'created_date'    => $createdDate,
+    ]);
+
+    echo json_encode([
+        'message'         => 'IPN URL registered successfully',
+        'ipn_url'         => $ipnUrl,
+        'notification_id' => $notificationId,
+        'created_date'    => $createdDate,
+    ]);
+
+} catch (PesapalException $e) {
+    /* — optional automatic “self-heal” —
+       If the error is a 401, wipe cache so the next attempt starts clean. */
+    if (str_contains($e->getMessage(), '401')) {
+        $config->clearAccessToken();
+    }
+
+    $log->error('Error registering IPN URL', [
+        'error'   => $e->getMessage(),
+        'details' => $e->getErrorDetails(),
+    ]);
+
+    echo $e->getErrorDetailsAsJson();
 }

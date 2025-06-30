@@ -113,12 +113,26 @@ class PesapalConfig
      * @param string $token
      * @param string $expiresAt Expiration time in a parseable format
      */
-    public function setAccessToken($token, $expiresAt)
+    public function setAccessToken($token, $expiresAt, $environment)
+    {
+        $config                     = $this->loadDynamicConfig();
+        $config['access_token']     = $token;
+        $config['expires_at']       = $expiresAt;
+        $config['token_env']        = $environment;   // ← here
+        $this->saveDynamicConfig($config);
+    }
+    
+    public function clearAccessToken()
     {
         $config = $this->loadDynamicConfig();
-        $config['access_token'] = $token;
-        $config['expires_at'] = $expiresAt;
+        unset($config['access_token'], $config['expires_at'], $config['token_env']);
         $this->saveDynamicConfig($config);
+    }
+
+     public function getTokenEnvironment()
+    {
+        $config = $this->loadDynamicConfig();
+        return $config['token_env'] ?? null;
     }
 
     /**

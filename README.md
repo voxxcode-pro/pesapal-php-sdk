@@ -103,42 +103,73 @@ You don't need to manually request or manage the `access_token`; the SDK ensures
 
 ### Important Notice: IPN Registration
 
-Before initiating any transactions, it is mandatory to register an IPN (Instant Payment Notification) URL. This ensures that you receive real-time updates on transaction status changes, such as successful payments, rejections, or errors.
+Before initiating any transactions, it is mandatory to register an IPN (Instant Payment Notification) URL. This allows your application to receive **real-time updates** on payment status, such as successful payments, failures, or reversals.
 
-The Pesapal SDK requires a `notification_id` to associate with every transaction, and this is only generated after the IPN URL is registered.
-
----
-
-**Key Points:**
-
-1. **Mandatory Step:** You must register the IPN URL before any transaction to obtain the `notification_id`.
-2. **Storage:** The `notification_id` is automatically stored in `pesapal_dynamic.json` after successful registration.
-3. **Publicly Accessible URL:** The IPN URL must be publicly accessible and should not be blocked by any server firewall rules.
-4. **Whitelisting Pesapal:** If your server has strict rules, ensure to whitelist calls from the Pesapal domain (`pesapal.com`).
+But here's where this SDK shines: it **automatically handles IPN registration smartly based on your environment** (sandbox or production) — making it easier to avoid common mistakes.
 
 ---
 
-**Proceed to Register Your IPN URL Below:**
+#### 🔍 How IPN Registration Works Behind the Scenes
+
+When the SDK initializes (e.g., via `submit_order.php` or `register_ipn.php`), it follows this logic:
+
+1. **Reads `pesapal_dynamic.json`** to load your previously registered IPN URL and `notification_id`.
+2. **Checks if the current environment (`sandbox` or `production`) matches** the `token_env` (also saved in `pesapal_dynamic.json`).
+3. If the environment has **changed**, or if the **IPN URL does not match** what Pesapal has on record, it:
+
+   - Automatically registers the correct IPN URL with Pesapal for the active environment using the already available IPN URL in your `pesapal_dynamic.json`.
+
+   ```json
+   "ipn_url": "https://www.example.com/ipn",
+
+   ```
+
+   - Updates the file `pesapal_dynamic.json` with the new `notification_id`, `access_token`, and environment tag (`token_env`).
+
+4. You **don’t need to manually update** this again – it’s handled for you.
+
+---
+
+#### 🛠️ Configure for Sandbox or Production
+
+At the top of each example (e.g., `register_ipn.php`, `submit_order.php`), you’ll find this block:
+
+```php
+$environment = 'sandbox';    // Change to 'production' when going live
+$sslVerify   = false;        // Set to true in production
+```
+
+Switch to production like this:
+
+```php
+$environment = 'production';
+$sslVerify   = true;
+```
+
+---
+
+#### ✅ What You Need to Do
+
+- **Set your environment** (`sandbox` or `production`)
+- **Ensure your `.env` file has the correct keys**
+- Let the SDK handle the rest: it will verify and register your IPN URL automatically.
+
+---
+
+**Why This Matters:**
+
+Pesapal assigns different notification IDs depending on the environment. If you use a sandbox `notification_id` in production (or vice versa), your payment callbacks may fail. This SDK prevents that error for you.
+
+---
 
 ### Register IPN URL
 
-Registering an IPN (Instant Payment Notification) URL is a crucial step to receive real-time updates on transaction status changes, such as payment completion, rejection, or errors.
+Refer to:
+`example/register_ipn.php`
 
-To understand how to implement this, refer to the example file provided:  
-`example/register_ipn.php`.
-
----
-
-**Illustration: IPN Registration Process**
+This script demonstrates how to register an IPN URL and retrieve the `notification_id` required for all transactions.
 
 ![Register IPN URL](example/images/register_ipn_example.png)
-
-- **File Location:** `example/register_ipn.php`
-- **What It Does:** This script demonstrates how to register an IPN URL and retrieve the `notification_id` that is required for all subsequent transactions.
-
----
-
-**Note:** Ensure your IPN URL is publicly accessible and correctly configured to handle incoming notifications from Pesapal.
 
 ### Submit Order
 
@@ -146,89 +177,15 @@ To understand how to implement this, refer to the example file provided:
 
 - **File Location:** `example/submit_order.php`
 
-To create and submit a payment request to Pesapal, you need to prepare order data that includes billing details, transaction description, and callback URLs. The SDK ensures all required fields are formatted correctly, including validating phone numbers and generating the necessary `access_token`.
-
-**Note:** A valid `notification_id` must be registered before submitting the payment request. Let's hope you already done that. Refer to the [Register IPN URL](#register-ipn-url) section.
-
----
-
-**Example Usage:**
-
-The following example demonstrates how to prepare and submit a payment request:
-
-````php
-// Prepare order data
-$orderData = [
-    "id" => $merchantReference, // Merchant's unique reference for the transaction
-    "currency" => $data['currency'], // Currency for the payment
-    "amount" => (float) $data['amount'], // Transaction amount
-    "description" => $data['description'], // Description of the payment
-    "callback_url" => "https://www.example.com/payment-callback", // Your callback URL
-    "notification_id" => $notificationId, // Notification ID obtained from IPN registration
-    "branch" => "Katorymnd Freelancer", // Optional branch identifier
-    "payment_method" => "card", // Restrict payment option to CARD only
-    "billing_address" => []
-];
-
-// Map billing details
-$billingDetails = $data['billing_details'];
-$countryCode = isset($billingDetails['country']) ? strtoupper($billingDetails['country']) : '';
-
-$orderData['billing_address'] = array_merge($orderData['billing_address'], [
-    "country_code" => $countryCode,
-    "first_name" => $billingDetails['first_name'] ?? '',
-    "middle_name" => '', // Optional
-    "last_name" => $billingDetails['last_name'] ?? '',
-    "line_1" => $billingDetails['address_line1'] ?? '',
-    "line_2" => $billingDetails['address_line2'] ?? '',
-    "city" => $billingDetails['city'] ?? '',
-    "state" => $billingDetails['state'] ?? '',
-    "postal_code" => $billingDetails['postal_code'] ?? ''
-]);
-
-// Include contact information
-if (!empty($data['email_address'])) {
-    $orderData['billing_address']['email_address'] = $data['email_address'];
-}
-
-if (!empty($data['phone_number'])) {
-    // Format phone number using libphonenumber
-    $phoneUtil = \libphonenumber\PhoneNumberUtil::getInstance();
-    try {
-        $numberProto = $phoneUtil->parse($data['phone_number'], null);
-        $nationalNumber = $phoneUtil->format($numberProto, \libphonenumber\PhoneNumberFormat::NATIONAL);
-        $orderData['billing_address']['phone_number'] = preg_replace('/[\s()-]/', '', $nationalNumber);
-    } catch (\libphonenumber\NumberParseException $e) {
-        throw new PesapalException('Invalid phone number format: ' . $e->getMessage());
-    }
-}
-
-// Obtain access token
-$accessToken = $clientApi->getAccessToken();
-if (!$accessToken) {
-    throw new PesapalException('Failed to obtain access token');
-}
-
-// Submit order request
-$response = $clientApi->submitOrderRequest($orderData);
-
-// Redirect the customer to the payment page
-header('Location: ' . $response['redirect_url']);
-exit();
-````
+See usage section for code sample…
 
 ### Get Transaction Status
 
-After the transaction is completed, use the `OrderTrackingId` to check the transaction status.
-
 ```php
-$orderTrackingId = $_GET['OrderTrackingId']; // Or retrieve from IPN data
-
-// Get transaction status
+$orderTrackingId = $_GET['OrderTrackingId'];
 $status = $pesapal->getTransactionStatus($orderTrackingId);
-
 echo 'Transaction Status: ' . $status['status'];
-````
+```
 
 ### Recurring Payments
 
@@ -236,100 +193,7 @@ echo 'Transaction Status: ' . $status['status'];
 
 - **File Location:** `example/recurring_order.php`
 
-Set up subscription-based payments for recurring charges using Pesapal. The SDK supports specifying subscription details such as start and end dates and frequency. It also includes validations for subscription details and formatting for dates and billing information.
-
----
-
-**Example Usage:**
-
-The following example demonstrates how to prepare and submit a recurring payment request:
-
-```php
-
-// Prepare order data
-$orderData = [
-    "id" => $merchantReference, // Unique merchant reference
-    "currency" => $currency,    // Payment currency
-    "amount" => (float) $amount, // Payment amount
-    "description" => $description, // Description of the subscription
-    "callback_url" => "https://www.example.com/subscription-callback", // Callback URL
-    "notification_id" => $notificationId, // Notification ID from IPN registration
-    "billing_address" => []
-];
-
-// Include billing and contact information
-if (!empty($emailAddress)) {
-    $orderData['billing_address']['email_address'] = $emailAddress;
-}
-
-if (!empty($phoneNumber)) {
-    $phoneUtil = \libphonenumber\PhoneNumberUtil::getInstance();
-    try {
-        $numberProto = $phoneUtil->parse($phoneNumber, null);
-        $nationalNumber = $phoneUtil->format($numberProto, \libphonenumber\PhoneNumberFormat::NATIONAL);
-        $orderData['billing_address']['phone_number'] = preg_replace('/[\s()-]/', '', $nationalNumber);
-    } catch (\libphonenumber\NumberParseException $e) {
-        throw new PesapalException('Invalid phone number format: ' . $e->getMessage());
-    }
-}
-
-// Map additional billing details
-if (isset($data['billing_details'])) {
-    $billingDetails = $data['billing_details'];
-    $orderData['billing_address'] = array_merge($orderData['billing_address'], [
-        "country_code" => strtoupper($billingDetails['country'] ?? ''),
-        "first_name" => $billingDetails['first_name'] ?? '',
-        "middle_name" => $billingDetails['middle_name'] ?? '',
-        "last_name" => $billingDetails['last_name'] ?? '',
-        "line_1" => $billingDetails['address_line1'] ?? '',
-        "line_2" => $billingDetails['address_line2'] ?? '',
-        "city" => $billingDetails['city'] ?? '',
-        "state" => $billingDetails['state'] ?? '',
-        "postal_code" => $billingDetails['postal_code'] ?? '',
-        "zip_code" => ''
-    ]);
-}
-
-// Handle recurring payment details
-$isRecurring = isset($subscriptionDetails) && !empty($subscriptionDetails);
-if ($isRecurring) {
-    if (!$accountNumber) {
-        throw new PesapalException('Account number is required for recurring payments.');
-    }
-
-    $requiredSubscriptionFields = ['start_date', 'end_date', 'frequency'];
-    foreach ($requiredSubscriptionFields as $field) {
-        if (empty($subscriptionDetails[$field])) {
-            throw new PesapalException("The field '$field' is required in subscription details.");
-        }
-    }
-
-    // Validate and format subscription dates
-    $startDate = DateTime::createFromFormat('Y-m-d', $subscriptionDetails['start_date']);
-    $endDate = DateTime::createFromFormat('Y-m-d', $subscriptionDetails['end_date']);
-    if (!$startDate || !$endDate || $endDate <= $startDate) {
-        throw new PesapalException('Invalid or inconsistent subscription date range.');
-    }
-
-    $orderData['account_number'] = $accountNumber;
-    $orderData['subscription_type'] = 'AUTO';
-    $orderData['subscription_details'] = [
-        'start_date' => $startDate->format('d-m-Y'), // Format to DD-MM-YYYY
-        'end_date' => $endDate->format('d-m-Y'),     // Format to DD-MM-YYYY
-        'frequency' => $subscriptionDetails['frequency']
-    ];
-}
-
-// Obtain a valid access token
-$accessToken = $clientApi->getAccessToken();
-if (!$accessToken) {
-    throw new PesapalException('Failed to obtain access token');
-}
-
-// Submit subscription order request
-$response = $clientApi->submitOrderRequest($orderData);
-
-```
+See usage section for code sample…
 
 ### Refund Request
 
@@ -337,151 +201,7 @@ $response = $clientApi->submitOrderRequest($orderData);
 
 - **File Location:** `example/RefundTransactionHandler.php`
 
-Requesting a refund for a completed transaction is straightforward with the SDK. The SDK automatically checks the transaction status using the `order_tracking_id` before submitting a refund request. If the transaction status is not `COMPLETED`, the SDK throws an error to prevent invalid refund attempts.
-
----
-
-**How It Works:**
-
-1. The SDK retrieves the transaction status using the provided `order_tracking_id`.
-2. If the transaction is `COMPLETED`, the SDK prepares and submits the refund request automatically.
-3. If the transaction is not `COMPLETED`, the SDK throws an error indicating that the refund request cannot proceed.
-
----
-
-**Example Usage:**
-
-```php
-// Provide the order tracking ID from the transaction
-$orderTrackingId = $data['order_tracking_id'];
- // Get the transaction status
-    $response = $clientApi->getTransactionStatus($orderTrackingId);
-
-    $responseData = []; // Initialize response data array
-
-    if ($response['status'] === 200 && isset($response['response'])) {
-        $transactionStatusData = $response['response'];
-
-        // Map status_code to status_message
-        $status_code = $transactionStatusData['status_code'] ?? null;
-        $status_messages = [
-            0 => 'INVALID',
-            1 => 'COMPLETED',
-            2 => 'FAILED',
-            3 => 'REVERSED',
-        ];
-        $status_message = isset($status_messages[$status_code]) ? $status_messages[$status_code] : 'UNKNOWN STATUS';
-
-        // Log the transaction status
-        $log->info('Transaction status retrieved successfully', [
-            'order_tracking_id' => $orderTrackingId,
-            'status_code' => $status_code,
-            'status_message' => $status_message,
-        ]);
-
-        // Collect transaction status data
-        $responseData['success'] = true;
-        $responseData['transaction_status'] = [
-            'payment_method' => $transactionStatusData['payment_method'] ?? null,
-            'amount' => $transactionStatusData['amount'] ?? null,
-            'created_date' => $transactionStatusData['created_date'] ?? null,
-            'confirmation_code' => $transactionStatusData['confirmation_code'] ?? null,
-            'order_tracking_id' => $transactionStatusData['order_tracking_id'] ?? null,
-            'payment_status_description' => $transactionStatusData['payment_status_description'] ?? null,
-            'description' => $transactionStatusData['description'] ?? null,
-            'message' => $transactionStatusData['message'] ?? null,
-            'payment_account' => $transactionStatusData['payment_account'] ?? null,
-            'call_back_url' => $transactionStatusData['call_back_url'] ?? null,
-            'status_code' => $status_code,
-            'status_message' => $status_message,
-            'merchant_reference' => $transactionStatusData['merchant_reference'] ?? null,
-            'account_number' => $transactionStatusData['account_number'] ?? null,
-            'payment_status_code' => $transactionStatusData['payment_status_code'] ?? null,
-            'currency' => $transactionStatusData['currency'] ?? null,
-            'error' => [
-                'error_type' => $transactionStatusData['error']['error_type'] ?? null,
-                'code' => $transactionStatusData['error']['code'] ?? null,
-                'message' => $transactionStatusData['error']['message'] ?? null
-            ]
-        ];
-
-        // Extract confirmation code for refund
-        $confirmationCode = $transactionStatusData['confirmation_code'] ?? null;
-        if ($confirmationCode) {
-
-            // Prepare refund data with user-provided values
-            $refundData = [
-                'confirmation_code' => $confirmationCode,
-                'amount' => $refundAmount,
-                'username' => $refundUsername,
-                'remarks' => $refundRemarks
-            ];
-
-            try {
-                // Request refund
-                $refundResponse = $clientApi->requestRefund($refundData);
-
-                if ($refundResponse['status'] === 200 && isset($refundResponse['response'])) {
-                    $refundDataResponse = $refundResponse['response'];
-
-                    // Log the refund response
-                    $log->info('Refund requested successfully', [
-                        'refund_data' => $refundData,
-                        'refund_response' => $refundDataResponse,
-                    ]);
-
-                    // Add refund response to the output
-                    $responseData['refund_response'] = $refundDataResponse;
-                } else {
-                    $errorMessage = $refundResponse['response']['error']['message'] ?? 'Unknown error occurred while requesting refund.';
-
-                    $log->error('Refund request failed', [
-                        'error' => $errorMessage,
-                        'refund_data' => $refundData,
-                    ]);
-
-                    throw new PesapalException($errorMessage);
-                }
-            } catch (PesapalException $e) {
-                // Log the error
-                $log->error('Error in requesting refund', [
-                    'error' => $e->getMessage(),
-                    'details' => $e->getErrorDetails(),
-                    'refund_data' => $refundData,
-                ]);
-
-                // Add the error to the response
-                $responseData['refund_error'] = [
-                    'error' => $e->getMessage(),
-                    'details' => $e->getErrorDetails(),
-                ];
-            }
-        } else {
-            // No confirmation code, cannot proceed with refund
-            $log->error('Confirmation code not available, cannot process refund.', [
-                'order_tracking_id' => $orderTrackingId,
-            ]);
-
-            $responseData['refund_error'] = [
-                'error' => 'Confirmation code not available, cannot process refund.',
-            ];
-        }
-
-        // Output the combined response
-        echo json_encode($responseData);
-
-    } else {
-        $errorMessage = $response['response']['error']['message'] ?? 'Unknown error occurred while retrieving transaction status.';
-
-        $log->error('Transaction status retrieval failed', [
-            'error' => $errorMessage,
-            'order_tracking_id' => $orderTrackingId
-        ]);
-
-        throw new PesapalException($errorMessage);
-    }
-
-```
+See usage section for code sample…
 
 ### Get Transaction Status
 
@@ -489,29 +209,14 @@ $orderTrackingId = $data['order_tracking_id'];
 
 - **File Location:** `example/transaction_helpers.php`
 
-After a transaction is completed, you can check its status using the `order_tracking_id`. This is useful to confirm whether a payment was successful, failed, or is still pending.
-
-```php
-
-    $orderTrackingId = $data['order_tracking_id'];
-
-    // Obtain a valid access token
-    $accessToken = $clientApi->getAccessToken();
-    if (!$accessToken) {
-        throw new PesapalException('Failed to obtain access token');
-    }
-
-    // Get the transaction status
-    $response = $clientApi->getTransactionStatus($orderTrackingId);
-```
+See usage section for code sample…
 
 ### Tutorials and Guides
 
 Embark on your journey with the Pesapal PHP SDK through our exclusive tutorials and guides:
 
-- **[Installing Pesapal Sdk: Kickstart Your Payment Integration](https://katorymnd.com/article/installing-pesapal-sdk-kickstart-your-payment-integration)** - Quickly install and set up the Pesapal PHP SDK to integrate secure payment processing into your PHP app with this essential beginner's guide.
-
-- **[Mastering Pesapal Sdk: Unlock Advanced Payment Features](https://katorymnd.com/article/mastering-pesapal-sdk-unlock-advanced-payment-features)** - Explore advanced features of the Pesapal PHP SDK: recurring payments, refunds, transaction queries, and more in this essential guide.
+- **[Installing Pesapal SDK: Kickstart Your Payment Integration](https://katorymnd.com/article/installing-pesapal-sdk-kickstart-your-payment-integration)**
+- **[Mastering Pesapal SDK: Unlock Advanced Payment Features](https://katorymnd.com/article/mastering-pesapal-sdk-unlock-advanced-payment-features)**
 
 ### Testing Environment Setup
 

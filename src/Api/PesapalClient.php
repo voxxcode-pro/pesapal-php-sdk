@@ -15,62 +15,100 @@ class PesapalClient
     private $baseUrl;
     private $httpClient;
     private $sslVerify;
+    private $environment;
 
-    public function __construct(PesapalConfig $config, $environment = 'sandbox', $sslVerify = false)
+     public function __construct(PesapalConfig $config,
+                                string        $environment = 'sandbox',
+                                bool          $sslVerify   = false)
     {
-        $this->config = $config;
-        $this->baseUrl = $this->config->getApiUrl($environment);
-        $this->httpClient = new Client();
-        $this->sslVerify = $sslVerify;
+        $this->config      = $config;
+        $this->environment = $environment;          // ← remember it
+        $this->baseUrl     = $this->config->getApiUrl($environment);
+        $this->httpClient  = new Client();
+        $this->sslVerify   = $sslVerify;
+    }
+
+   /**
+     * Retrieves a valid OAuth2 access-token.
+     *
+     * Caching rules:
+     *   • token not expired AND
+     *   • token minted for the current environment  ⟹ reuse
+     * Pass $forceRefresh = true to ignore cache.
+     *
+     * @param  bool $forceRefresh Force renewal even if cache looks valid.
+     * @return string             Bearer token.
+     * @throws PesapalException   Wrapped network / validation failure.
+     */
+    public function getAccessToken(bool $forceRefresh = false): string
+    {
+        $token      = $this->config->getAccessToken();
+        $expiresAt  = $this->config->getAccessTokenExpiry();
+        $tokenEnv   = $this->config->getTokenEnvironment();
+
+        $tokenValid = $token
+                   && $expiresAt
+                   && strtotime($expiresAt) > time()
+                   && $tokenEnv === $this->environment;
+
+        if (!$forceRefresh && $tokenValid) {
+            return $token;           // 🙌 still good
+        }
+
+        /* ––––– Request a fresh token ––––– */
+        $endpoint = $this->baseUrl . '/Auth/RequestToken';
+
+        try {
+            $resp = $this->httpClient->post($endpoint, [
+                'json'    => [
+                    'consumer_key'    => $this->config->getConsumerKey(),
+                    'consumer_secret' => $this->config->getConsumerSecret(),
+                ],
+                'headers' => [
+                    'Accept'       => 'application/json',
+                    'Content-Type' => 'application/json',
+                ],
+                'verify'  => $this->sslVerify,
+            ]);
+
+            $data = json_decode($resp->getBody()->getContents(), true);
+
+            if (!isset($data['token'], $data['expiryDate'])) {
+                throw new PesapalException(
+                    'Access token not found in response',
+                    0,
+                    $data
+                );
+            }
+
+            /* Persist new token and environment */
+            $this->config->setAccessToken(
+                $data['token'],
+                $data['expiryDate'],
+                $this->environment
+            );
+
+            return $data['token'];
+        } catch (RequestException $e) {
+            $body = $e->hasResponse()
+                ? $e->getResponse()->getBody()->getContents()
+                : null;
+
+            throw new PesapalException(
+                'Error getting access token: ' . $e->getMessage(),
+                (int) $e->getCode(),
+                $body,
+                $e
+            );
+        }
     }
 
     /**
-     * Retrieves an access token for authorization, using stored token if not expired.
-     *
-     * @return string
-     * @throws PesapalException
+     * Wipe any cached token – handy straight after a 401.
      */
-    public function getAccessToken()
+    public function clearAccessToken(): void
     {
-        // Check if an access token is already set and not expired
-        $token = $this->config->getAccessToken();
-        $expiresAt = $this->config->getAccessTokenExpiry();
-
-        if ($token && $expiresAt && strtotime($expiresAt) > time()) {
-            return $token;
-        }
-
-        // Fetch a new token if none exists or if expired
-        $url = $this->baseUrl . '/Auth/RequestToken';
-        $payload = [
-            'consumer_key' => $this->config->getConsumerKey(),
-            'consumer_secret' => $this->config->getConsumerSecret()
-        ];
-        $options = [
-            'headers' => [
-                'Accept' => 'application/json',
-                'Content-Type' => 'application/json'
-            ],
-            'json' => $payload,
-            'verify' => $this->sslVerify,
-        ];
-
-        try {
-            $response = $this->httpClient->post($url, $options);
-            $data = json_decode($response->getBody()->getContents(), true);
-
-            if (isset($data['token']) && isset($data['expiryDate'])) {
-                $expiresAt = $data['expiryDate'];
-                $this->config->setAccessToken($data['token'], $expiresAt);
-                return $data['token'];
-            } else {
-                throw new PesapalException('Access token not found in response', 0, $data);
-            }
-
-        } catch (RequestException $e) {
-            $responseBody = $e->hasResponse() ? $e->getResponse()->getBody()->getContents() : null;
-            throw new PesapalException('Error getting access token: ' . $e->getMessage(), $e->getCode(), $responseBody, $e);
-        }
+        $this->config->clearAccessToken();
     }
 
     /**

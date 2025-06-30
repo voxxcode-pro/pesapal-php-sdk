@@ -1,20 +1,39 @@
 <?php
+/**
+ * recurring_order_handler.php
+ * ────────────────────────────────────────────────────────────────────────────
+ * One-stop endpoint that:
+ *   1. Loads keys from .env.
+ *   2. Creates / updates pesapal_dynamic.json automatically when switching
+ *      between sandbox ⇆ production.
+ *   3. Validates the cached notification_id against the live IPN list and
+ *      registers a fresh IPN URL if missing or wrong.
+ *   4. Handles one-shot or recurring orders.
+ *   5. Submits the order (with a single automatic retry on InvalidIpnId).
+ *
+ * Flip these two lines when you go live:
+ *      $environment = 'production';
+ *      $sslVerify   = true;
+ *
+ * 2025-06-30 • Katorymnd Freelancer – MIT
+ */
 
-// Set content type to JSON
-header("Content-Type: application/json");
+declare(strict_types=1);
 
-// Include Composer's autoloader
+header('Content-Type: application/json');
+
+/* ─── 1) Autoloader ──────────────────────────────────────────────────────── */
 $autoloadPath = __DIR__ . '/../vendor/autoload.php';
 if (!file_exists($autoloadPath)) {
     echo json_encode([
-        'success' => false,
-        'errorMessage' => 'Autoloader not found. Please run composer install.'
+        'success'      => false,
+        'errorMessage' => 'Autoloader not found. Run composer install.',
     ]);
     exit;
 }
 require_once $autoloadPath;
 
-// Include the libphonenumber library
+/* ─── 2) Imports ─────────────────────────────────────────────────────────── */
 use libphonenumber\PhoneNumberUtil;
 use libphonenumber\PhoneNumberFormat;
 use libphonenumber\NumberParseException;
@@ -28,242 +47,221 @@ use Monolog\Handler\StreamHandler;
 use Whoops\Run;
 use Whoops\Handler\PrettyPageHandler;
 
-// Initialize Whoops error handler for development
+/* ─── 3) Dev-friendly error page ─────────────────────────────────────────── */
 $whoops = new Run();
 $whoops->pushHandler(new PrettyPageHandler());
 $whoops->register();
 
-// Load environment variables
-$dotenv = Dotenv::createImmutable(__DIR__ . '/../');
-$dotenv->load();
+/* ─── 4) .env & keys ─────────────────────────────────────────────────────── */
+Dotenv::createImmutable(__DIR__ . '/../')->load();
+
+$consumerKey    = $_ENV['PESAPAL_CONSUMER_KEY']    ?? null;
+$consumerSecret = $_ENV['PESAPAL_CONSUMER_SECRET'] ?? null;
+
+if (!$consumerKey || !$consumerSecret) {
+    echo json_encode(['success' => false, 'errorMessage' => 'PESAPAL keys missing in .env']);
+    exit;
+}
+
+/* ─── 5) Config + client ─────────────────────────────────────────────────── */
+$configPath  = __DIR__ . '/../pesapal_dynamic.json';
+$config      = new PesapalConfig($consumerKey, $consumerSecret, $configPath);
+
+$environment = 'sandbox';   /* ← switch to 'production' when live */
+$sslVerify   = false;       /* ← true in production */
+
+$clientApi   = new PesapalClient($config, $environment, $sslVerify);
+
+/* ─── 6) Logger ──────────────────────────────────────────────────────────── */
+$log = new Logger('pawaPayLogger');
+$log->pushHandler(new StreamHandler(__DIR__ . '/../logs/payment_success.log', Logger::INFO));
+$log->pushHandler(new StreamHandler(__DIR__ . '/../logs/payment_failed.log',  Logger::ERROR));
+
+/* ─── 7) Token & environment sanity ──────────────────────────────────────── */
+try {
+    if ($config->getTokenEnvironment() !== $environment) {
+        $config->clearAccessToken();                     // wipe stale token + recreate file if missing
+    }
+    $accessToken = $clientApi->getAccessToken(true);     // always refresh once on boot
+} catch (PesapalException $e) {
+    $log->error('Token acquisition failed', ['error' => $e->getMessage()]);
+    echo $e->getErrorDetailsAsJson();
+    exit;
+}
+
+/**
+ * 7b) IPN URL validation / auto-registration
+ * --------------------------------------------------------------------------
+ * Ensures we have a valid notification_id tied to this merchant + environment.
+ */
+$ipnCfg        = $config->getIpnDetails();
+$ipnUrlDesired = $ipnCfg['ipn_url'] ?? 'https://www.example.com/ipn';
+$notificationId = $ipnCfg['notification_id'] ?? null;
+$ipnNeedsUpdate = false;
 
 try {
-    // Retrieve consumer key and secret from environment variables
-    $consumerKey = $_ENV['PESAPAL_CONSUMER_KEY'] ?? null;
-    $consumerSecret = $_ENV['PESAPAL_CONSUMER_SECRET'] ?? null;
+    $ipnListResp = $clientApi->getRegisteredIpns();
+    $validIds    = array_column($ipnListResp['response'], 'ipn_id');
+    $ipnNeedsUpdate = !$notificationId || !in_array($notificationId, $validIds, true);
+} catch (PesapalException $e) {
+    $ipnNeedsUpdate = true;  // safest path
+}
 
-    if (!$consumerKey || !$consumerSecret) {
-        throw new PesapalException('Consumer key or secret missing in environment variables.');
+if ($ipnNeedsUpdate) {
+    try {
+        $resp           = $clientApi->registerIpnUrl($ipnUrlDesired, 'POST');
+        $notificationId = $resp['response']['ipn_id'] ?? null;
+
+        $log->info('IPN auto-registered', [
+            'ipn_url'         => $ipnUrlDesired,
+            'notification_id' => $notificationId,
+            'env'             => $environment,
+        ]);
+    } catch (PesapalException $e) {
+        $log->error('Auto IPN registration failed', ['error' => $e->getMessage()]);
+        echo $e->getErrorDetailsAsJson();
+        exit;
+    }
+}
+
+/* ─── 8) Parse & validate JSON payload ───────────────────────────────────── */
+$payload = json_decode(file_get_contents('php://input'), true);
+if (!$payload) {
+    echo json_encode(['success' => false, 'error' => 'Invalid JSON payload']);
+    exit;
+}
+
+foreach (['amount', 'currency', 'description', 'email_address', 'phone_number'] as $field) {
+    if (empty($payload[$field])) {
+        echo json_encode(['success' => false, 'error' => "Field '{$field}' is required"]);
+        exit;
+    }
+}
+if (strlen($payload['description']) > 100) {
+    echo json_encode(['success' => false, 'error' => 'Description >100 characters']);
+    exit;
+}
+
+/* ─── 9) Build order body (supports recurring) ───────────────────────────── */
+$merchantRef = PesapalHelpers::generateMerchantReference();
+
+$billing      = $payload['billing_details']     ?? [];
+$country      = strtoupper($billing['country']  ?? '');
+$subDetails   = $payload['subscription_details']?? [];
+$isRecurring  = !empty($subDetails);
+$accountNo    = $payload['account_number']      ?? null;
+
+$order = [
+    'id'              => $merchantRef,
+    'currency'        => $payload['currency'],
+    'amount'          => (float) $payload['amount'],
+    'description'     => $payload['description'],
+    'callback_url'    => 'https://www.example.com/payment-callback',
+    'notification_id' => $notificationId,
+    'payment_method'  => 'card',
+    'billing_address' => [
+        'country_code'  => $country,
+        'first_name'    => $billing['first_name']    ?? '',
+        'middle_name'   => $billing['middle_name']   ?? '',
+        'last_name'     => $billing['last_name']     ?? '',
+        'line_1'        => $billing['address_line1'] ?? '',
+        'line_2'        => $billing['address_line2'] ?? '',
+        'city'          => $billing['city']          ?? '',
+        'state'         => $billing['state']         ?? '',
+        'postal_code'   => $billing['postal_code']   ?? '',
+        'email_address' => $payload['email_address'],
+    ],
+];
+
+/* Pretty phone number */
+try {
+    $pn   = PhoneNumberUtil::getInstance();
+    $proto= $pn->parse($payload['phone_number'], null);
+    $order['billing_address']['phone_number'] = preg_replace(
+        '/[\s()-]/',
+        '',
+        $pn->format($proto, PhoneNumberFormat::NATIONAL)
+    );
+} catch (NumberParseException $e) {
+    $log->error('Phone parse fail', ['error' => $e->getMessage()]);
+    echo json_encode(['success' => false, 'error' => 'Invalid phone number']);
+    exit;
+}
+
+/* Optional: recurring block */
+if ($isRecurring) {
+    if (!$accountNo) {
+        echo json_encode(['success' => false, 'error' => 'Account number required for recurring payments.']);
+        exit;
     }
 
-    // Initialize PesapalConfig and PesapalClient
-    $configPath = __DIR__ . '/../pesapal_dynamic.json';
-    $config = new PesapalConfig($consumerKey, $consumerSecret, $configPath);
-    $environment = 'sandbox';
-    $sslVerify = false; // Enable SSL verification for production
-
-
-    $clientApi = new PesapalClient($config, $environment, $sslVerify);
-
-
-    // Initialize Monolog for logging
-    $log = new Logger('pawaPayLogger');
-    $log->pushHandler(new StreamHandler(__DIR__ . '/../logs/payment_success.log', \Monolog\Level::Info));
-    $log->pushHandler(new StreamHandler(__DIR__ . '/../logs/payment_failed.log', \Monolog\Level::Error));
-
-    // Get the raw POST data
-    $rawData = file_get_contents("php://input");
-    $data = json_decode($rawData, true);
-
-    if (!$data) {
-        throw new PesapalException('Invalid JSON data received.');
+    foreach (['start_date', 'end_date', 'frequency'] as $field) {
+        if (empty($subDetails[$field])) {
+            echo json_encode(['success' => false, 'error' => "Subscription field '{$field}' required"]);
+            exit;
+        }
     }
 
-    // Extract variables from $data
-    $amount = $data['amount'] ?? null;
-    $currency = $data['currency'] ?? 'USD';
-    $description = $data['description'] ?? null;
-    $emailAddress = $data['email_address'] ?? null;
-    $phoneNumber = $data['phone_number'] ?? null;
-    $merchantReference = PesapalHelpers::generateMerchantReference();
-    $accountNumber = $data['account_number'] ?? null;
-    $subscriptionDetails = $data['subscription_details'] ?? null;
-
-    // Validate required fields
-    if (!$amount || !$description) {
-        throw new PesapalException('Amount and description are required.');
+    $sDate = DateTime::createFromFormat('Y-m-d', $subDetails['start_date']);
+    $eDate = DateTime::createFromFormat('Y-m-d', $subDetails['end_date']);
+    if (!$sDate || !$eDate || $eDate <= $sDate) {
+        echo json_encode(['success' => false, 'error' => 'Invalid subscription date range']);
+        exit;
     }
 
-
-    // Validate contact information
-    if (!$emailAddress || !$phoneNumber) {
-        throw new PesapalException('Both email address and phone number must be provided.');
-    }
-
-
-    // Validate description length
-    if (strlen($description) > 100) {
-        throw new PesapalException('Description must be 100 characters or fewer.');
-    }
-
-    // Retrieve IPN details from dynamic config
-    $ipnDetails = $config->getIpnDetails();
-    $notificationId = $ipnDetails['notification_id'] ?? null;
-
-    if (!$notificationId) {
-        throw new PesapalException('Notification ID (IPN) is missing. Please configure IPN first.');
-    }
-
-    // Prepare order data
-    $orderData = [
-        "id" => $merchantReference,
-        "currency" => $currency,
-        "amount" => (float) $amount,
-        "description" => $description,
-        "callback_url" => "https://www.example.com/payment-callback",
-        "notification_id" => $notificationId,
-        "billing_address" => []
+    $order['account_number']     = $accountNo;
+    $order['subscription_type']  = 'AUTO';
+    $order['subscription_details'] = [
+        'start_date' => $sDate->format('d-m-Y'),
+        'end_date'   => $eDate->format('d-m-Y'),
+        'frequency'  => $subDetails['frequency'],
     ];
+}
 
+/* ─── 10) Submit order – retry once on InvalidIpnId ─────────────────────── */
+$didRetry = false;
+RETRY:
+try {
+    $resp = $clientApi->submitOrderRequest($order);
 
-    // Include contact information provided
-    if (!empty($emailAddress)) {
-        $orderData['billing_address']['email_address'] = $emailAddress;
-    }
-
-    if (!empty($phoneNumber)) {
-        // Use libphonenumber to parse and format the phone number into national format
-        $phoneUtil = PhoneNumberUtil::getInstance();
-
-        try {
-            // Parse the phone number in international format
-            $numberProto = $phoneUtil->parse($data['phone_number'], null);
-
-            // Format the number into national format (without country code)
-            $nationalNumber = $phoneUtil->format($numberProto, PhoneNumberFormat::NATIONAL);
-
-            // Remove any spaces, dashes, or parentheses
-            $nationalNumber = preg_replace('/[\s()-]/', '', $nationalNumber);
-
-            $orderData['billing_address']['phone_number'] = $nationalNumber;
-        } catch (NumberParseException $e) {
-            // Log the error
-            $log->error('Phone number parsing failed', [
-                'error' => $e->getMessage(),
-                'phone_number' => $data['phone_number']
-            ]);
-
-            // Return an error response
-            throw new PesapalException('Invalid phone number format.');
-        }
-    }
-
-    // Include new billing details
-    if (isset($data['billing_details'])) {
-        $billingDetails = $data['billing_details'];
-        $orderData['billing_address']['country_code'] = $billingDetails['country'] ?? '';
-        $orderData['billing_address']['first_name'] = $billingDetails['first_name'] ?? '';
-        $orderData['billing_address']['middle_name'] = $billingDetails['middle_name'] ?? ''; // Assuming this field is available in $data
-        $orderData['billing_address']['last_name'] = $billingDetails['last_name'] ?? '';
-        $orderData['billing_address']['line_1'] = $billingDetails['address_line1'] ?? '';
-        $orderData['billing_address']['line_2'] = $billingDetails['address_line2'] ?? '';
-        $orderData['billing_address']['city'] = $billingDetails['city'] ?? '';
-        $orderData['billing_address']['state'] = $billingDetails['state'] ?? '';
-        $orderData['billing_address']['postal_code'] = $billingDetails['postal_code'] ?? '';
-        $orderData['billing_address']['zip_code'] = ''; // Assuming no specific field in $data, use blank
-    }
-
-    // Handle Recurring Payments
-    $isRecurring = isset($subscriptionDetails) && !empty($subscriptionDetails);
-    if ($isRecurring) {
-        if (!$accountNumber) {
-            throw new PesapalException('Account number is required for recurring payments.');
-        }
-
-        // Validate subscription details
-        $requiredSubscriptionFields = ['start_date', 'end_date', 'frequency'];
-        foreach ($requiredSubscriptionFields as $field) {
-            if (empty($subscriptionDetails[$field])) {
-                throw new PesapalException("The field '$field' is required in subscription details.");
-            }
-        }
-
-        // Validate date formats (assuming 'YYYY-MM-DD' format from the front-end)
-        $startDate = DateTime::createFromFormat('Y-m-d', $subscriptionDetails['start_date']);
-        $endDate = DateTime::createFromFormat('Y-m-d', $subscriptionDetails['end_date']);
-        if (!$startDate || !$endDate) {
-            throw new PesapalException('Invalid date format in subscription details. Use YYYY-MM-DD.');
-        }
-        if ($endDate <= $startDate) {
-            throw new PesapalException('End date must be after start date in subscription details.');
-        }
-
-        // Include recurring payment details with reformatted dates
-        $orderData['account_number'] = $accountNumber;
-        $orderData['subscription_type'] = 'AUTO'; // Include subscription_type
-        $orderData['subscription_details'] = [
-            'start_date' => $startDate->format('d-m-Y'), // Reformat date to 'DD-MM-YYYY'
-            'end_date' => $endDate->format('d-m-Y'),     // Reformat date to 'DD-MM-YYYY'
-            'frequency' => $subscriptionDetails['frequency']
-        ];
-    }
-
-    // Obtain a valid access token
-    $accessToken = $clientApi->getAccessToken();
-    if (!$accessToken) {
-        throw new PesapalException('Failed to obtain access token');
-    }
-
-    // Submit order request to Pesapal
-    $response = $clientApi->submitOrderRequest($orderData);
-
-    if ($response['status'] === 200 && isset($response['response']['redirect_url'])) {
-        $redirectUrl = $response['response']['redirect_url'];
-        $orderTrackingId = $response['response']['order_tracking_id'];
-
-        $log->info('Order submitted successfully', [
-            'redirect_url' => $redirectUrl,
-            'order_tracking_id' => $orderTrackingId,
-            'merchant_reference' => $merchantReference
+    if ($resp['status'] === 200 && isset($resp['response']['redirect_url'])) {
+        $log->info('Order OK', [
+            'merchant_reference' => $merchantRef,
+            'order_tracking_id'  => $resp['response']['order_tracking_id'],
         ]);
 
         echo json_encode([
-            "success" => true,
-            "message" => "Order submitted successfully!",
-            "redirect_url" => $redirectUrl,
-            "order_tracking_id" => $orderTrackingId,
-            "merchant_reference" => $merchantReference
+            'success'            => true,
+            'redirect_url'       => $resp['response']['redirect_url'],
+            'order_tracking_id'  => $resp['response']['order_tracking_id'],
+            'merchant_reference' => $merchantRef,
         ]);
-
-    } else {
-        // Handle error response
-        $errorResponse = $response['response']['error'] ?? 'Unknown error occurred during order submission.';
-
-        // If $errorResponse is an array, convert it to a string
-        if (is_array($errorResponse)) {
-            $errorMessage = $errorResponse['message'] ?? json_encode($errorResponse);
-        } else {
-            $errorMessage = $errorResponse;
-        }
-
-        $log->error('Order submission failed', [
-            'error' => $errorMessage,
-            'full_error_response' => $errorResponse,
-            'merchant_reference' => $merchantReference
-        ]);
-
-        throw new PesapalException($errorMessage);
+        exit;
     }
 
+    $errorCode = $resp['response']['code'] ?? null;
+    if (!$didRetry && $errorCode === 'InvalidIpnId') {
+        $log->warning('Invalid IPN ID – fixing & retrying once');
+        $config->setIpnDetails(null, null);
+        $fix                = $clientApi->registerIpnUrl($ipnUrlDesired, 'POST');
+        $notificationId     = $fix['response']['ipn_id'] ?? null;
+        $order['notification_id'] = $notificationId;
+        $didRetry = true;
+        goto RETRY;
+    }
+
+    throw new PesapalException(
+        $resp['response']['message'] ?? 'Unknown submission error',
+        $resp['status'] ?? 0,
+        $resp
+    );
+
 } catch (PesapalException $e) {
-    // Log the error to payment_failed.log
-    $log->error('Error in processing payment', [
-        'error' => $e->getMessage(),
-        'details' => $e->getErrorDetails()
-    ]);
-
-    // Return the detailed error message
-    echo json_encode([
-        'success' => false,
-        'error' => $e->getMessage(),
-        'details' => $e->getErrorDetails()
-    ]);
-} catch (Exception $e) {
-    // Handle any unexpected exceptions
-    $log->error('Unexpected error', ['error' => $e->getMessage()]);
-
-    echo json_encode([
-        'success' => false,
-        'error' => 'An unexpected error occurred. Please try again later.'
-    ]);
+    $log->error('Order failed', ['error' => $e->getMessage(), 'details' => $e->getErrorDetails()]);
+    echo $e->getErrorDetailsAsJson();
+    exit;
+} catch (\Exception $e) {
+    $log->error('Unexpected', ['error' => $e->getMessage()]);
+    echo json_encode(['success' => false, 'error' => 'Unexpected server error']);
+    exit;
 }
