@@ -49,7 +49,7 @@ $whoops->pushHandler(new PrettyPageHandler());
 $whoops->register();
 
 /* ─── 4) .env & keys ─────────────────────────────────────────────────────── */
-Dotenv::createImmutable(__DIR__ . '/../')->load();
+//Dotenv::createImmutable(__DIR__ . '/../')->load();
 
 $consumerKey    = $_ENV['PESAPAL_CONSUMER_KEY']    ?? null;
 $consumerSecret = $_ENV['PESAPAL_CONSUMER_SECRET'] ?? null;
