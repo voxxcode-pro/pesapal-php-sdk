@@ -1,4 +1,6 @@
 <?php
+declare(strict_types=1);
+
 /**
  * payment_order.php
  * ────────────────────────────────────────────────────────────────────────────
@@ -6,21 +8,18 @@
  * 2.  Ensures the cached OAuth token belongs to *that* environment
  * 3.  Automatically (re-)registers the IPN URL if it is missing, invalid, or tied
  *     to a different environment
- * 4.  Submits an order request (with one automatic retry on InvalidIpnId) and
- *     returns the redirect URL
+ * 4.  Submits an order request (with one automatic retry on InvalidIpnId)
+ *     and returns the redirect URL
  *
  * 2025-06-30 • Katorymnd Freelancer
  */
-
 
 ini_set('display_errors', 1);
 ini_set('display_startup_errors', 1);
 error_reporting(E_ALL);
 
-
-declare(strict_types=1);
-
 header('Content-Type: application/json');
+
 
 /* ─── 1) Auto-loader ─────────────────────────────────────────────────────── */
 $autoloadPath = __DIR__ . '/../vendor/autoload.php';
