@@ -225,6 +225,13 @@ try {
         'error'   => $e->getMessage(),
         'details' => $e->getErrorDetails(),
     ]);
+    echo json_encode([
+  'success' => false,
+  'error' => $e->getMessage(),
+  'details' => $e->getErrorDetails(),
+]);
+exit;
+
     echo $e->getErrorDetailsAsJson();
     exit;
 } catch (\Exception $e) {
