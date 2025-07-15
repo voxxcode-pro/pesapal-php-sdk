@@ -58,7 +58,7 @@ if (!$consumerKey || !$consumerSecret) {
 $configPath  = __DIR__ . '/../pesapal_dynamic.json';
 $config      = new PesapalConfig($consumerKey, $consumerSecret, $configPath);
 
-$environment = 'sandbox';           /* ← flip to 'sandbox' when testing */
+$environment = 'production';           /* ← flip to 'sandbox' when testing */
 $sslVerify   = false;
 
 $clientApi   = new PesapalClient($config, $environment, $sslVerify);
